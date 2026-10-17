@@ -1,26 +1,50 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #FAF8FF;
+  --foreground: #2D223B;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@keyframes floatLantern {
+  0%, 100% {
+    transform: translateY(0px) rotate(-1deg);
   }
+  50% {
+    transform: translateY(-6px) rotate(1.5deg);
+  }
+}
+
+@keyframes lanternPulse {
+  0%, 100% {
+    opacity: 0.75;
+    filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.55));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 16px rgba(245, 158, 11, 0.85));
+  }
+}
+
+.animate-lantern {
+  animation: floatLantern 5s ease-in-out infinite;
+}
+
+.animate-lantern-delayed {
+  animation: floatLantern 6.5s ease-in-out 1.5s infinite;
+}
+
+.lantern-glow {
+  animation: lanternPulse 4s ease-in-out infinite;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }
