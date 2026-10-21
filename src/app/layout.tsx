@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Cormorant_Garamond, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 
@@ -14,10 +14,23 @@ const jakarta = Plus_Jakarta_Sans({
   weight: ["400", "500", "600", "700"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  viewportFit: "cover",
+  themeColor: "#4A2E6E",
+};
+
 export const metadata: Metadata = {
   title: "Jomar & Jenila | Wedding Planner — Lavender & Lanterns",
   description:
-    "Official Wedding Planner & Tracker for Jomar & Jenila — Stella Maris Chapel & Sumlang Lake",
+    "Official Wedding Planner & Tracker for Jomar & Jenila — Daraga Church & Sumlang Lake",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Jomar & Jenila",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

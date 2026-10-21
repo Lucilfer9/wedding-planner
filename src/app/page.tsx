@@ -26,6 +26,9 @@ import {
   Star,
   Pin,
   GripVertical,
+  Image as ImageIcon,
+  Upload,
+  Maximize2,
 } from 'lucide-react'
 
 type WeddingDetails = {
@@ -107,6 +110,27 @@ type Guest = {
   table_number: number | null
   notes: string
 }
+
+type VisionItem = {
+  id: string
+  title: string
+  category: string
+  image_url: string
+  notes: string
+  pinned: boolean
+  sort_order: number
+}
+
+const DEFAULT_VISION_CATEGORIES = [
+  'Bridal Gown & Attire',
+  'Groom & Entourage',
+  'Reception Carts',
+  'Sumlang Lake Styling',
+  'Daraga Church',
+  'Lanterns & Lighting',
+  'Cake & Catering',
+  'Invitations & Souvenirs',
+]
 
 const TIMELINE_ORDER = [
   '12 Months',
@@ -203,10 +227,11 @@ export default function JomarAndJenilaWeddingPlanner() {
   const [diyProjects, setDiyProjects] = useState<DiyProject[]>([])
   const [requirements, setRequirements] = useState<PreWeddingRequirement[]>([])
   const [guests, setGuests] = useState<Guest[]>([])
+  const [visionItems, setVisionItems] = useState<VisionItem[]>([])
   const [loading, setLoading] = useState(true)
 
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'checklist' | 'budget' | 'suppliers' | 'requirements' | 'guests'
+    'overview' | 'checklist' | 'budget' | 'suppliers' | 'requirements' | 'guests' | 'vision'
   >('overview')
 
   // Editable Header / Total Budget Modal State
@@ -214,7 +239,7 @@ export default function JomarAndJenilaWeddingPlanner() {
   const [headerForm, setHeaderForm] = useState({
     couple_names: 'Jomar & Jenila',
     wedding_date: '2027-11-20',
-    church_venue: 'Stella Maris Chapel',
+    church_venue: 'Daraga Church',
     reception_venue: 'Sumlang Lake',
     total_budget: '500000',
   })
@@ -314,6 +339,32 @@ export default function JomarAndJenilaWeddingPlanner() {
   const [newGuestRole, setNewGuestRole] = useState('Guest')
   const [newGuestConfirmation, setNewGuestConfirmation] = useState('No Confirmation')
 
+  // Vision & Sample Board States
+  const [visionCategoryFilter, setVisionCategoryFilter] = useState<string>('All')
+  const [customVisionCategories, setCustomVisionCategories] = useState<string[]>(
+    DEFAULT_VISION_CATEGORIES
+  )
+  const [isAddingVisionCategory, setIsAddingVisionCategory] = useState(false)
+  const [newCustomVisionCategory, setNewCustomVisionCategory] = useState('')
+  const [newVisionTitle, setNewVisionTitle] = useState('')
+  const [newVisionCategory, setNewVisionCategory] = useState('Bridal Gown & Attire')
+  const [newVisionNotes, setNewVisionNotes] = useState('')
+  const [newVisionImageUrl, setNewVisionImageUrl] = useState('')
+  const [visionUploadFile, setVisionUploadFile] = useState<File | null>(null)
+  const [visionUploadPreview, setVisionUploadPreview] = useState<string | null>(null)
+  const [isUploadingVision, setIsUploadingVision] = useState(false)
+  const [isDraggingVisionUpload, setIsDraggingVisionUpload] = useState(false)
+
+  const [activeVisionEdit, setActiveVisionEdit] = useState<{
+    id: string
+    field: 'title' | 'category' | 'notes'
+  } | null>(null)
+  const [visionDraftValue, setVisionDraftValue] = useState('')
+  const [confirmDeleteVisionId, setConfirmDeleteVisionId] = useState<string | null>(null)
+  const [draggedVisionId, setDraggedVisionId] = useState<string | null>(null)
+  const [dragOverVisionId, setDragOverVisionId] = useState<string | null>(null)
+  const [lightboxVisionItem, setLightboxVisionItem] = useState<VisionItem | null>(null)
+
   async function fetchAllData() {
     setLoading(true)
     const [
@@ -325,6 +376,7 @@ export default function JomarAndJenilaWeddingPlanner() {
       diyRes,
       reqRes,
       guestsRes,
+      visionRes,
     ] = await Promise.all([
       supabase.from('jj_wedding_details').select('*').limit(1).single(),
       supabase
@@ -341,6 +393,11 @@ export default function JomarAndJenilaWeddingPlanner() {
         .select('*')
         .order('created_at', { ascending: true }),
       supabase.from('jj_guests').select('*').order('created_at', { ascending: true }),
+      supabase
+        .from('jj_vision_items')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true }),
     ])
 
     if (detailsRes.data) {
@@ -360,6 +417,7 @@ export default function JomarAndJenilaWeddingPlanner() {
     if (diyRes.data) setDiyProjects(diyRes.data)
     if (reqRes.data) setRequirements(reqRes.data)
     if (guestsRes.data) setGuests(guestsRes.data)
+    if (visionRes.data) setVisionItems(visionRes.data)
     setLoading(false)
   }
 
@@ -815,6 +873,190 @@ export default function JomarAndJenilaWeddingPlanner() {
     await supabase.from('jj_guests').delete().eq('id', id)
   }
 
+  // Vision & Sample Board Handlers
+  function handleVisionFileSelect(file: File) {
+    if (!file.type.startsWith('image/')) return
+    setVisionUploadFile(file)
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setVisionUploadPreview(reader.result)
+      }
+    }
+    reader.readAsDataURL(file)
+    if (!newVisionTitle.trim()) {
+      const cleaned = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ')
+      setNewVisionTitle(cleaned)
+    }
+  }
+
+  function handleVisionPaste(e: React.ClipboardEvent) {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        const blob = items[i].getAsFile()
+        if (blob) {
+          e.preventDefault()
+          handleVisionFileSelect(blob)
+          return
+        }
+      }
+    }
+  }
+
+  async function uploadVisionImageFile(file: File): Promise<string | null> {
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+    const safeName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const filePath = `samples/${safeName}`
+
+    const { error } = await supabase.storage.from('wedding-samples').upload(filePath, file, {
+      cacheControl: '3600',
+      upsert: false,
+    })
+
+    if (!error) {
+      const { data } = supabase.storage.from('wedding-samples').getPublicUrl(filePath)
+      if (data?.publicUrl) return data.publicUrl
+    }
+    return visionUploadPreview
+  }
+
+  async function addVisionItem(e: React.FormEvent) {
+    e.preventDefault()
+    if (!visionUploadFile && !newVisionImageUrl.trim()) return
+
+    setIsUploadingVision(true)
+    let finalImageUrl = newVisionImageUrl.trim()
+    if (visionUploadFile) {
+      const uploadedUrl = await uploadVisionImageFile(visionUploadFile)
+      if (uploadedUrl) finalImageUrl = uploadedUrl
+    }
+
+    if (!finalImageUrl) {
+      setIsUploadingVision(false)
+      return
+    }
+
+    const label = newVisionTitle.trim() || `${newVisionCategory} Sample`
+    const { data } = await supabase
+      .from('jj_vision_items')
+      .insert([
+        {
+          title: label,
+          category: newVisionCategory,
+          image_url: finalImageUrl,
+          notes: newVisionNotes.trim(),
+          pinned: false,
+          sort_order: visionItems.length + 1,
+        },
+      ])
+      .select()
+      .single()
+
+    if (data) {
+      setVisionItems((prev) => [...prev, data])
+      setNewVisionTitle('')
+      setNewVisionNotes('')
+      setNewVisionImageUrl('')
+      setVisionUploadFile(null)
+      setVisionUploadPreview(null)
+    }
+    setIsUploadingVision(false)
+  }
+
+  function addCustomVisionCategory() {
+    const trimmed = newCustomVisionCategory.trim()
+    if (!trimmed) return
+    if (!customVisionCategories.includes(trimmed)) {
+      setCustomVisionCategories((prev) => [...prev, trimmed])
+    }
+    setNewVisionCategory(trimmed)
+    setVisionCategoryFilter(trimmed)
+    setNewCustomVisionCategory('')
+    setIsAddingVisionCategory(false)
+  }
+
+  function openVisionField(item: VisionItem, field: 'title' | 'category' | 'notes') {
+    setActiveVisionEdit({ id: item.id, field })
+    setVisionDraftValue(item[field] || '')
+  }
+
+  async function commitVisionField() {
+    if (!activeVisionEdit) return
+    const { id, field } = activeVisionEdit
+    const val = visionDraftValue.trim()
+    setActiveVisionEdit(null)
+
+    if (field === 'title' && !val) return
+    setVisionItems((prev) => prev.map((v) => (v.id === id ? { ...v, [field]: val } : v)))
+    await supabase
+      .from('jj_vision_items')
+      .update({ [field]: val })
+      .eq('id', id)
+  }
+
+  async function togglePinVisionItem(item: VisionItem) {
+    const nextPinned = !item.pinned
+    setVisionItems((prev) =>
+      prev.map((v) => (v.id === item.id ? { ...v, pinned: nextPinned } : v))
+    )
+    await supabase
+      .from('jj_vision_items')
+      .update({ pinned: nextPinned })
+      .eq('id', item.id)
+  }
+
+  async function handleVisionCardDrop(targetId: string) {
+    setDragOverVisionId(null)
+    if (!draggedVisionId || draggedVisionId === targetId) {
+      setDraggedVisionId(null)
+      return
+    }
+
+    const sorted = [...visionItems].sort((a, b) => {
+      if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
+      return (a.sort_order || 0) - (b.sort_order || 0)
+    })
+
+    const fromIdx = sorted.findIndex((i) => i.id === draggedVisionId)
+    const toIdx = sorted.findIndex((i) => i.id === targetId)
+    if (fromIdx === -1 || toIdx === -1) {
+      setDraggedVisionId(null)
+      return
+    }
+
+    const [moved] = sorted.splice(fromIdx, 1)
+    const targetItem = visionItems.find((i) => i.id === targetId)
+    if (targetItem && Boolean(moved.pinned) !== Boolean(targetItem.pinned)) {
+      moved.pinned = Boolean(targetItem.pinned)
+    }
+    sorted.splice(toIdx, 0, moved)
+
+    const reindexed = sorted.map((item, idx) => ({
+      ...item,
+      sort_order: idx + 1,
+    }))
+
+    setVisionItems(reindexed)
+    setDraggedVisionId(null)
+
+    await Promise.all(
+      reindexed.map((item) =>
+        supabase
+          .from('jj_vision_items')
+          .update({ sort_order: item.sort_order, pinned: Boolean(item.pinned) })
+          .eq('id', item.id)
+      )
+    )
+  }
+
+  async function deleteVisionItem(id: string) {
+    setConfirmDeleteVisionId(null)
+    setVisionItems((prev) => prev.filter((v) => v.id !== id))
+    await supabase.from('jj_vision_items').delete().eq('id', id)
+  }
+
   // Computed Metrics
   const totalBudget = Number(details?.total_budget ?? 500000)
   const totalAllocated = useMemo(
@@ -850,16 +1092,21 @@ export default function JomarAndJenilaWeddingPlanner() {
     setDaysUntilWedding(Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24))))
   }, [details?.wedding_date])
 
-  // Automatically dismiss the "Delete? Yes / No" confirmation when clicking anywhere outside it
+  // Automatically dismiss "Delete? Yes / No" confirmations or Lightbox when clicking outside / pressing Escape
   useEffect(() => {
-    if (!confirmDeleteBudgetId) return
+    if (!confirmDeleteBudgetId && !confirmDeleteVisionId && !lightboxVisionItem) return
     function handleOutsideClick(e: MouseEvent) {
       const target = e.target as HTMLElement | null
       if (target && target.closest('[data-delete-confirm="true"]')) return
       setConfirmDeleteBudgetId(null)
+      setConfirmDeleteVisionId(null)
     }
     function handleEscape(e: KeyboardEvent) {
-      if (e.key === 'Escape') setConfirmDeleteBudgetId(null)
+      if (e.key === 'Escape') {
+        setConfirmDeleteBudgetId(null)
+        setConfirmDeleteVisionId(null)
+        setLightboxVisionItem(null)
+      }
     }
     document.addEventListener('mousedown', handleOutsideClick)
     document.addEventListener('keydown', handleEscape)
@@ -867,7 +1114,7 @@ export default function JomarAndJenilaWeddingPlanner() {
       document.removeEventListener('mousedown', handleOutsideClick)
       document.removeEventListener('keydown', handleEscape)
     }
-  }, [confirmDeleteBudgetId])
+  }, [confirmDeleteBudgetId, confirmDeleteVisionId, lightboxVisionItem])
 
   const filteredGuests = useMemo(() => {
     return guests.filter((g) => {
@@ -931,8 +1178,24 @@ export default function JomarAndJenilaWeddingPlanner() {
     })
   }, [potentialSuppliers, potCategoryFilter, potShortlistedOnly, potSearch])
 
+  const allVisionCategories = useMemo(() => {
+    const fromData = visionItems.map((v) => v.category).filter(Boolean)
+    return Array.from(new Set([...customVisionCategories, ...fromData]))
+  }, [customVisionCategories, visionItems])
+
+  const filteredVisionItems = useMemo(() => {
+    const base =
+      visionCategoryFilter === 'All'
+        ? visionItems
+        : visionItems.filter((v) => v.category === visionCategoryFilter)
+    return [...base].sort((a, b) => {
+      if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
+      return (a.sort_order || 0) - (b.sort_order || 0)
+    })
+  }, [visionItems, visionCategoryFilter])
+
   return (
-    <div className="min-h-screen bg-[#FAF8FF] text-[#2D223B] pb-20">
+    <div className="min-h-screen bg-[#FAF8FF] text-[#2D223B] pb-28 md:pb-20">
       {/* Decorative Lavender & Floating Lanterns Hero Banner */}
       <header className="relative overflow-hidden bg-gradient-to-br from-[#2E1C44] via-[#4A2E6E] to-[#6B469B] text-white border-b border-purple-300/20 shadow-lg">
         {/* Soft Ambient Lantern Glow Orbs */}
@@ -952,16 +1215,16 @@ export default function JomarAndJenilaWeddingPlanner() {
           </div>
         </div>
 
-        <div className="max-w-7xl mx-auto px-6 pt-8 pb-6 relative z-10">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-5 sm:pb-6 relative z-10">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 sm:gap-6">
             <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-amber-300/30 text-amber-200 text-xs font-medium tracking-wide">
-                <Flame className="w-3.5 h-3.5 text-amber-300 fill-amber-300" />
-                <span>Lavender & Floating Lanterns Wedding Tracker</span>
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-amber-300/30 text-amber-200 text-[11px] sm:text-xs font-medium tracking-wide">
+                <Flame className="w-3.5 h-3.5 text-amber-300 fill-amber-300 shrink-0" />
+                <span className="truncate">Lavender & Floating Lanterns Wedding Tracker</span>
               </div>
 
-              <div className="flex flex-wrap items-baseline gap-4">
-                <h1 className="font-serif text-4xl sm:text-5xl font-bold tracking-tight text-white drop-shadow-xs">
+              <div className="flex flex-wrap items-baseline gap-3 sm:gap-4">
+                <h1 className="font-serif text-3xl sm:text-5xl font-bold tracking-tight text-white drop-shadow-xs">
                   {details?.couple_names || 'Jomar & Jenila'}
                 </h1>
                 <button
@@ -973,34 +1236,34 @@ export default function JomarAndJenilaWeddingPlanner() {
                 </button>
               </div>
 
-              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-purple-100/90 pt-1">
+              <div className="flex flex-wrap items-center gap-x-4 sm:gap-x-6 gap-y-2 text-xs sm:text-sm text-purple-100/90 pt-1">
                 <span className="inline-flex items-center gap-1.5">
-                  <Calendar className="w-4 h-4 text-amber-300" />
+                  <Calendar className="w-4 h-4 text-amber-300 shrink-0" />
                   <strong className="text-white">{details?.wedding_date || '2027-11-20'}</strong>
-                  <span className="px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-200 text-xs font-medium border border-amber-300/30">
+                  <span className="px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-200 text-[11px] font-medium border border-amber-300/30">
                     {daysUntilWedding} days to go
                   </span>
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <Church className="w-4 h-4 text-purple-200" />
-                  Church: <strong className="text-white">{details?.church_venue || 'Stella Maris Chapel'}</strong>
+                  <Church className="w-4 h-4 text-purple-200 shrink-0" />
+                  Church: <strong className="text-white">{details?.church_venue || 'Daraga Church'}</strong>
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <MapPin className="w-4 h-4 text-amber-300" />
+                  <MapPin className="w-4 h-4 text-amber-300 shrink-0" />
                   Reception: <strong className="text-white">{details?.reception_venue || 'Sumlang Lake'}</strong>
                 </span>
               </div>
             </div>
 
             {/* Live Philippine Peso Budget Allocation Pill */}
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-4 min-w-[300px] sm:min-w-[360px]">
+            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-4 w-full lg:w-auto lg:min-w-[360px]">
               <div className="flex items-center justify-between text-xs uppercase tracking-wider text-purple-200 mb-1">
                 <span>Total Wedding Budget (PHP)</span>
                 <span className="text-amber-300 font-semibold">
                   {Math.round((totalAllocated / Math.max(totalBudget, 1)) * 100)}% Allocated
                 </span>
               </div>
-              <div className="flex items-baseline justify-between gap-4">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <p className="text-2xl sm:text-3xl font-bold text-white">{formatPHP(totalBudget)}</p>
                 <p className="text-xs text-purple-200">
                   Unallocated:{' '}
@@ -1015,7 +1278,7 @@ export default function JomarAndJenilaWeddingPlanner() {
                   }}
                 />
               </div>
-              <div className="flex items-center justify-between text-[11px] text-purple-200 mt-2">
+              <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-purple-200 mt-2">
                 <span>Allocated: {formatPHP(totalAllocated)}</span>
                 <span>Actual: {formatPHP(totalActual)}</span>
                 <span>Paid: {formatPHP(totalPaid)}</span>
@@ -1090,8 +1353,8 @@ export default function JomarAndJenilaWeddingPlanner() {
           )}
 
           {/* Navigation Tabs */}
-          <div className="flex items-center justify-between gap-2 mt-6 pt-4 border-t border-white/15 overflow-x-auto">
-            <div className="flex items-center gap-1.5">
+          <div className="flex items-center justify-between gap-2 mt-5 sm:mt-6 pt-4 border-t border-white/15">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
               {(
                 [
                   { id: 'overview', label: 'Overview' },
@@ -1100,12 +1363,13 @@ export default function JomarAndJenilaWeddingPlanner() {
                   { id: 'suppliers', label: 'Suppliers, Carts & DIY' },
                   { id: 'requirements', label: `Requirements (${completedReqsCount}/${requirements.length})` },
                   { id: 'guests', label: `Guest List (${guests.length})` },
+                  { id: 'vision', label: `Vision & Samples (${visionItems.length})` },
                 ] as const
               ).map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-medium whitespace-nowrap transition-all cursor-pointer ${
+                  className={`px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium whitespace-nowrap transition-all cursor-pointer ${
                     activeTab === tab.id
                       ? 'bg-white text-[#4A2E6E] shadow-sm font-semibold'
                       : 'text-purple-100 hover:bg-white/10'
@@ -1128,9 +1392,9 @@ export default function JomarAndJenilaWeddingPlanner() {
       </header>
 
       {/* Main Content Container */}
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+      <main className="max-w-7xl mx-auto px-3.5 sm:px-6 py-5 sm:py-8 space-y-6 sm:space-y-8">
         {/* Top Summary KPI Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
           <div
             onClick={() => setActiveTab('budget')}
             className="bg-white rounded-2xl p-5 border border-[#E6DEFA] shadow-xs hover:shadow-md transition cursor-pointer"
@@ -1229,7 +1493,7 @@ export default function JomarAndJenilaWeddingPlanner() {
                     <span>Church Ceremony Venue</span>
                   </div>
                   <p className="font-serif text-xl font-bold text-[#2D223B] mt-1">
-                    {details?.church_venue || 'Stella Maris Chapel'}
+                    {details?.church_venue || 'Daraga Church'}
                   </p>
                   <p className="text-xs text-[#6E5D85] mt-1">
                     Includes Church Florist, Bride&apos;s Bouquet, Pianist/Violin, Preacher & Coaster Bus to Reception
@@ -1647,7 +1911,7 @@ export default function JomarAndJenilaWeddingPlanner() {
             </div>
 
             {/* Category Filter Pills */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
               <button
                 onClick={() => setSelectedBudgetCategory('All')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap cursor-pointer ${
@@ -2069,7 +2333,7 @@ export default function JomarAndJenilaWeddingPlanner() {
 
               {/* Compact Filter & Search Toolbar */}
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-2xl bg-[#FAF8FF] border border-[#EFE9FF]">
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 md:pb-0">
                   <button
                     onClick={() => setSupplierCategoryFilter('All')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition cursor-pointer ${
@@ -2467,7 +2731,7 @@ export default function JomarAndJenilaWeddingPlanner() {
 
               {/* Filter Bar to Prevent Page Bloat */}
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-2xl bg-[#FAF8FF] border border-[#EFE9FF]">
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 md:pb-0">
                   <button
                     onClick={() => setPotCategoryFilter('All')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition cursor-pointer ${
@@ -2797,7 +3061,7 @@ export default function JomarAndJenilaWeddingPlanner() {
                 Pre-Wedding Requirements Checklist
               </h2>
               <p className="text-xs text-[#6E5D85] mt-0.5">
-                Track processing times, validity windows, and parish/city hall requirements for Stella Maris Chapel.
+                Track processing times, validity windows, and parish/city hall requirements for Daraga Church.
               </p>
             </div>
 
@@ -3011,7 +3275,789 @@ export default function JomarAndJenilaWeddingPlanner() {
             </div>
           </section>
         )}
+
+        {/* 6. WEDDING VISION & SAMPLE BOARD TAB */}
+        {activeTab === 'vision' && (
+          <section
+            onPaste={handleVisionPaste}
+            className="bg-white rounded-2xl border border-[#E6DEFA] p-6 shadow-xs space-y-6"
+          >
+            {/* Header */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#7C5CBF]">
+                  Gowns, Reception Carts, Sumlang Lake Lanterns &amp; Floral Pegs
+                </span>
+                <h2 className="font-serif text-2xl font-bold text-[#2D223B]">
+                  Wedding Vision &amp; Sample Board
+                </h2>
+                <p className="text-xs text-[#6E5D85] mt-0.5">
+                  Upload or drag &amp; drop photos, paste screenshots (<kbd className="px-1.5 py-0.5 rounded bg-[#F3EEFF] text-[#4A2E6E] font-mono text-[10px]">Ctrl+V</kbd>), or paste an image link. Click any label or note to edit immediately, or pin your top picks to the front.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-[#6E5D85] bg-[#FAF8FF] border border-[#E6DEFA] px-3.5 py-2 rounded-xl">
+                <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>
+                  <strong className="text-[#2D223B]">{visionItems.length}</strong> samples •{' '}
+                  <strong className="text-amber-700">
+                    {visionItems.filter((v) => v.pinned).length}
+                  </strong>{' '}
+                  top picks pinned
+                </span>
+              </div>
+            </div>
+
+            {/* Category Filter Pills + Add Custom Label */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+              <button
+                type="button"
+                onClick={() => setVisionCategoryFilter('All')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition cursor-pointer ${
+                  visionCategoryFilter === 'All'
+                    ? 'bg-[#6B469B] text-white shadow-xs'
+                    : 'bg-[#F3EEFF] text-[#5B4678] hover:bg-[#E6DEFA]'
+                }`}
+              >
+                All Samples ({visionItems.length})
+              </button>
+              {allVisionCategories.map((cat) => {
+                const count = visionItems.filter((v) => v.category === cat).length
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setVisionCategoryFilter(cat)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition cursor-pointer ${
+                      visionCategoryFilter === cat
+                        ? 'bg-[#6B469B] text-white shadow-xs'
+                        : 'bg-[#F3EEFF] text-[#5B4678] hover:bg-[#E6DEFA]'
+                    }`}
+                  >
+                    {cat} ({count})
+                  </button>
+                )
+              })}
+
+              {isAddingVisionCategory ? (
+                <div className="inline-flex items-center gap-1 bg-[#FAF8FF] border border-[#C6B3F0] rounded-xl px-2 py-1">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="New label category..."
+                    value={newCustomVisionCategory}
+                    onChange={(e) => setNewCustomVisionCategory(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        addCustomVisionCategory()
+                      }
+                      if (e.key === 'Escape') setIsAddingVisionCategory(false)
+                    }}
+                    className="text-xs bg-transparent focus:outline-none w-32 text-[#2D223B]"
+                  />
+                  <button
+                    type="button"
+                    onClick={addCustomVisionCategory}
+                    className="p-1 rounded-lg bg-[#6B469B] text-white hover:bg-[#583585] cursor-pointer"
+                  >
+                    <Check className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingVisionCategory(false)}
+                    className="p-1 rounded-lg text-stone-400 hover:text-stone-600 cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsAddingVisionCategory(true)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap border border-dashed border-[#B79CED] text-[#6B469B] hover:bg-[#F3EEFF] transition cursor-pointer"
+                >
+                  + Custom Label
+                </button>
+              )}
+            </div>
+
+            {/* Add Sample Photo Dropzone & Form */}
+            <form
+              onSubmit={addVisionItem}
+              className="grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 rounded-2xl bg-[#FAF8FF] border border-[#E6DEFA] items-center"
+            >
+              {/* Drag & Drop / File Picker / Paste Zone */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setIsDraggingVisionUpload(true)
+                }}
+                onDragLeave={() => setIsDraggingVisionUpload(false)}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  setIsDraggingVisionUpload(false)
+                  const file = e.dataTransfer.files?.[0]
+                  if (file) handleVisionFileSelect(file)
+                }}
+                className={`lg:col-span-5 relative flex items-center gap-3 p-3.5 rounded-2xl border-2 border-dashed transition ${
+                  isDraggingVisionUpload
+                    ? 'border-[#6B469B] bg-[#F3EEFF]'
+                    : 'border-[#C8B6F2] bg-white hover:border-[#7C5CBF]'
+                }`}
+              >
+                {visionUploadPreview ? (
+                  <div className="flex items-center gap-3 w-full">
+                    <img
+                      src={visionUploadPreview}
+                      alt="Upload preview"
+                      className="w-14 h-14 rounded-xl object-cover border border-[#E6DEFA] shrink-0"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-[#2D223B] truncate">
+                        {visionUploadFile?.name || 'Pasted Image Ready'}
+                      </p>
+                      <p className="text-[11px] text-emerald-700 font-medium">
+                        Ready to add to Vision Board
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVisionUploadFile(null)
+                        setVisionUploadPreview(null)
+                      }}
+                      className="p-1.5 rounded-lg bg-stone-100 text-stone-500 hover:text-rose-600 cursor-pointer"
+                      title="Remove selected image"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex items-center gap-3 w-full cursor-pointer">
+                    <div className="w-10 h-10 rounded-xl bg-[#F3EEFF] text-[#6B469B] flex items-center justify-center shrink-0">
+                      <Upload className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-[#2D223B]">
+                        Drag &amp; drop an image, click to browse, or press Ctrl+V
+                      </p>
+                      <p className="text-[11px] text-[#6E5D85] truncate">
+                        Supports JPG, PNG, WEBP from phone or desktop
+                      </p>
+                    </div>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) handleVisionFileSelect(file)
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                )}
+              </div>
+
+              {/* Label, Category, URL & Notes Inputs */}
+              <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                <input
+                  type="text"
+                  placeholder="Label (e.g. Jenila's Dream Lace Gown)"
+                  value={newVisionTitle}
+                  onChange={(e) => setNewVisionTitle(e.target.value)}
+                  className="px-3 py-2 text-xs rounded-xl border border-[#D8CBF8] bg-white text-[#2D223B]"
+                />
+
+                <select
+                  value={newVisionCategory}
+                  onChange={(e) => setNewVisionCategory(e.target.value)}
+                  className="px-3 py-2 text-xs rounded-xl border border-[#D8CBF8] bg-white text-[#2D223B]"
+                >
+                  {allVisionCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  type="text"
+                  placeholder="Notes / Supplier peg (optional)"
+                  value={newVisionNotes}
+                  onChange={(e) => setNewVisionNotes(e.target.value)}
+                  className="px-3 py-2 text-xs rounded-xl border border-[#D8CBF8] bg-white text-[#2D223B]"
+                />
+
+                <input
+                  type="url"
+                  placeholder="Or paste direct image URL (https://...)"
+                  value={newVisionImageUrl}
+                  onChange={(e) => setNewVisionImageUrl(e.target.value)}
+                  className="sm:col-span-2 px-3 py-2 text-xs rounded-xl border border-[#D8CBF8] bg-white text-[#2D223B]"
+                />
+
+                <button
+                  type="submit"
+                  disabled={isUploadingVision || (!visionUploadFile && !newVisionImageUrl.trim())}
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-[#6B469B] text-white hover:bg-[#583585] disabled:opacity-50 transition cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  {isUploadingVision ? 'Uploading...' : 'Add to Vision Board'}
+                </button>
+              </div>
+            </form>
+
+            {/* Vision Board Gallery: Coalesced Mood Board Collage in "All", Detailed Editable Cards in Category Views */}
+            {filteredVisionItems.length === 0 ? (
+              <div className="text-center py-14 px-4 rounded-2xl border border-dashed border-[#D8CBF8] bg-[#FAF8FF]/60 space-y-2">
+                <div className="w-12 h-12 rounded-2xl bg-[#F3EEFF] text-[#6B469B] flex items-center justify-center mx-auto">
+                  <ImageIcon className="w-6 h-6" />
+                </div>
+                <h3 className="font-serif text-lg font-bold text-[#2D223B]">
+                  No sample photos in this category yet
+                </h3>
+                <p className="text-xs text-[#6E5D85] max-w-md mx-auto">
+                  Upload a photo from your device, drag &amp; drop an inspiration peg, or press{' '}
+                  <strong>Ctrl+V</strong> to paste any screenshot for gowns, carts, Daraga Church florals, or lantern setups.
+                </p>
+              </div>
+            ) : visionCategoryFilter === 'All' ? (
+              /* COALESCED EDITORIAL MOOD BOARD COLLAGE (ALL SAMPLES VIEW) */
+              <div className="max-w-4xl mx-auto bg-white rounded-sm border-2 border-[#D8CBF8] shadow-xl overflow-hidden">
+                {/* Editorial Mood Board Top Banner */}
+                <div className="bg-gradient-to-r from-[#5E4382] via-[#73539D] to-[#5E4382] py-5 px-6 text-center border-b border-[#E6DEFA]">
+                  <h3 className="font-serif text-2xl sm:text-3xl font-bold tracking-wide text-white lowercase">
+                    lavender &amp; lanterns wedding
+                  </h3>
+                  <p className="text-[11px] uppercase tracking-[0.25em] text-purple-100/90 mt-1">
+                    {details?.couple_names || 'Jomar & Jenila'} • {details?.church_venue || 'Daraga Church'} &amp; {details?.reception_venue || 'Sumlang Lake'}
+                  </p>
+                </div>
+
+                {/* Coalesced Multi-Aspect Collage Canvas */}
+                <div className="p-4 sm:p-6 bg-white">
+                  <div className="grid grid-cols-12 auto-rows-[95px] sm:auto-rows-[120px] gap-1.5 sm:gap-2">
+                    {filteredVisionItems.map((item, idx) => {
+                      const isPinned = Boolean(item.pinned)
+                      const isDragOver = dragOverVisionId === item.id
+                      const isConfirmingDelete = confirmDeleteVisionId === item.id
+
+                      // Editorial collage tile spans that coalesce portrait, square, and landscape pegs together
+                      const spanPattern = [
+                        'col-span-6 sm:col-span-4 row-span-3', // Tall portrait left (e.g. Arch / Venue)
+                        'col-span-6 sm:col-span-4 row-span-2', // Center top square (e.g. Bouquet / Details)
+                        'col-span-12 sm:col-span-4 row-span-3', // Tall portrait right (e.g. Bridal Gown)
+                        'col-span-6 sm:col-span-4 row-span-2', // Center middle square (e.g. Cake / Carts)
+                        'col-span-6 sm:col-span-4 row-span-2', // Left middle
+                        'col-span-6 sm:col-span-4 row-span-2', // Right middle
+                        'col-span-6 sm:col-span-4 row-span-3', // Bottom left tall
+                        'col-span-6 sm:col-span-4 row-span-2', // Bottom center
+                        'col-span-12 sm:col-span-4 row-span-2', // Bottom right
+                      ][idx % 9]
+
+                      // Subtle organic overlap margins on desktop to mirror editorial mood boards
+                      const overlapClass =
+                        idx % 4 === 1
+                          ? 'sm:mt-2 sm:-ml-1 z-10'
+                          : idx % 4 === 3
+                          ? 'sm:-mt-2 sm:ml-1 z-10'
+                          : 'z-0'
+
+                      return (
+                        <div
+                          key={item.id}
+                          draggable
+                          onDragStart={(e) => {
+                            setDraggedVisionId(item.id)
+                            e.dataTransfer.effectAllowed = 'move'
+                          }}
+                          onDragOver={(e) => {
+                            e.preventDefault()
+                            e.dataTransfer.dropEffect = 'move'
+                            if (dragOverVisionId !== item.id) {
+                              setDragOverVisionId(item.id)
+                            }
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverVisionId === item.id) {
+                              setDragOverVisionId(null)
+                            }
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault()
+                            handleVisionCardDrop(item.id)
+                          }}
+                          onDragEnd={() => {
+                            setDraggedVisionId(null)
+                            setDragOverVisionId(null)
+                          }}
+                          className={`group relative overflow-hidden bg-[#FAF8FF] border-2 border-white shadow-sm hover:z-30 hover:shadow-xl transition-all duration-300 ${spanPattern} ${overlapClass} ${
+                            isDragOver ? 'ring-2 ring-[#6B469B]' : ''
+                          } ${draggedVisionId === item.id ? 'opacity-40' : ''}`}
+                        >
+                          <img
+                            src={item.image_url}
+                            alt={item.title}
+                            onClick={() => setLightboxVisionItem(item)}
+                            className="w-full h-full object-cover group-hover:scale-105 transition duration-500 cursor-zoom-in"
+                          />
+
+                          {/* Pinned Top Pick Ribbon */}
+                          {isPinned && (
+                            <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-amber-400/95 text-stone-950 text-[10px] font-bold shadow-xs pointer-events-none">
+                              ★ Top Pick
+                            </div>
+                          )}
+
+                          {/* Hover / Touch Controls & Label Overlay (Always accessible on mobile/tablet touchscreens) */}
+                          <div className="absolute inset-0 bg-gradient-to-t from-stone-950/80 via-stone-950/15 to-transparent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200 flex flex-col justify-between p-2 sm:p-2.5">
+                            <div className="flex items-center justify-between gap-1">
+                              <span
+                                onClick={() => setVisionCategoryFilter(item.category)}
+                                title="Filter by this category to edit details"
+                                className="px-2 py-0.5 rounded-full bg-white/90 text-[#4A2E6E] text-[10px] font-semibold truncate cursor-pointer hover:bg-white"
+                              >
+                                {item.category}
+                              </span>
+
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => togglePinVisionItem(item)}
+                                  title={isPinned ? 'Unpin Top Pick' : 'Pin as Top Pick'}
+                                  className={`p-1 rounded-lg shadow-xs transition cursor-pointer ${
+                                    isPinned
+                                      ? 'bg-amber-400 text-stone-950'
+                                      : 'bg-white/90 text-stone-700 hover:bg-white'
+                                  }`}
+                                >
+                                  <Pin className="w-3 h-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setLightboxVisionItem(item)}
+                                  title="Full screen preview"
+                                  className="p-1 rounded-lg bg-white/90 text-stone-700 hover:bg-white shadow-xs transition cursor-pointer"
+                                >
+                                  <Maximize2 className="w-3 h-3" />
+                                </button>
+                                {isConfirmingDelete ? (
+                                  <div
+                                    data-delete-confirm="true"
+                                    className="inline-flex items-center gap-1 bg-rose-600 text-white px-1.5 py-0.5 rounded-lg text-[10px] font-bold"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteVisionItem(item.id)}
+                                      className="underline cursor-pointer"
+                                    >
+                                      Delete
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteVisionId(null)}
+                                      className="text-rose-100 hover:text-white ml-1 cursor-pointer"
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteVisionId(item.id)}
+                                    title="Delete sample"
+                                    className="p-1 rounded-lg bg-white/90 text-stone-700 hover:text-rose-600 hover:bg-white shadow-xs transition cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div
+                              onClick={() => setLightboxVisionItem(item)}
+                              className="cursor-pointer"
+                            >
+                              <p className="text-white font-semibold text-xs leading-tight drop-shadow-xs line-clamp-1">
+                                {item.title}
+                              </p>
+                              {item.notes && (
+                                <p className="text-purple-100/90 text-[10px] line-clamp-1 mt-0.5">
+                                  {item.notes}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Bottom Wedding Color Palette Swatches (Matching Reference Vision Board) */}
+                  <div className="mt-6 pt-4 border-t border-[#F2ECFF] flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="text-center sm:text-left">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#7C5CBF]">
+                        Wedding Color Palette • Tap any category pill above to edit individual labels
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
+                      {[
+                        { hex: '#D8CBF8', label: 'Soft Lavender' },
+                        { hex: '#6B469B', label: 'Royal Plum' },
+                        { hex: '#E6D7C3', label: 'Warm Champagne' },
+                        { hex: '#F59E0B', label: 'Lantern Amber' },
+                        { hex: '#FAF8FF', label: 'Crisp White' },
+                      ].map((swatch) => (
+                        <div key={swatch.hex} className="flex flex-col items-center gap-1">
+                          <div
+                            className="w-11 h-11 sm:w-14 sm:h-14 rounded-xs border border-stone-200 shadow-xs"
+                            style={{ backgroundColor: swatch.hex }}
+                            title={`${swatch.label} (${swatch.hex})`}
+                          />
+                          <span className="text-[9px] text-[#6E5D85] font-medium">
+                            {swatch.label}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                {filteredVisionItems.map((item, idx) => {
+                  const isPinned = Boolean(item.pinned)
+                  const isDragOver = dragOverVisionId === item.id
+                  const isConfirmingDelete = confirmDeleteVisionId === item.id
+                  const isEditingTitle =
+                    activeVisionEdit?.id === item.id && activeVisionEdit.field === 'title'
+                  const isEditingCategory =
+                    activeVisionEdit?.id === item.id && activeVisionEdit.field === 'category'
+                  const isEditingNotes =
+                    activeVisionEdit?.id === item.id && activeVisionEdit.field === 'notes'
+
+                  return (
+                    <div
+                      key={item.id}
+                      draggable
+                      onDragStart={(e) => {
+                        setDraggedVisionId(item.id)
+                        e.dataTransfer.effectAllowed = 'move'
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        e.dataTransfer.dropEffect = 'move'
+                        if (dragOverVisionId !== item.id) {
+                          setDragOverVisionId(item.id)
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverVisionId === item.id) {
+                          setDragOverVisionId(null)
+                        }
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        handleVisionCardDrop(item.id)
+                      }}
+                      onDragEnd={() => {
+                        setDraggedVisionId(null)
+                        setDragOverVisionId(null)
+                      }}
+                      className={`group rounded-2xl border overflow-hidden flex flex-col justify-between transition shadow-xs hover:shadow-md ${
+                        isDragOver
+                          ? 'border-2 border-[#6B469B] bg-[#F3EEFF]/50'
+                          : isPinned
+                          ? 'border-amber-300 bg-amber-50/20'
+                          : 'border-[#E6DEFA] bg-white'
+                      } ${draggedVisionId === item.id ? 'opacity-40' : ''}`}
+                    >
+                      {/* Image Container */}
+                      <div>
+                        <div className="relative aspect-[4/3] w-full bg-[#F3EEFF] overflow-hidden">
+                          <img
+                            src={item.image_url}
+                            alt={item.title}
+                            onClick={() => setLightboxVisionItem(item)}
+                            className="w-full h-full object-cover group-hover:scale-105 transition duration-500 cursor-zoom-in"
+                          />
+
+                          {/* Top-Left Card Index + Drag Handle */}
+                          <div className="absolute top-2.5 left-2.5 flex items-center gap-1 px-2 py-1 rounded-lg bg-white/90 backdrop-blur-xs text-[#2D223B] text-xs font-bold shadow-xs">
+                            <GripVertical className="w-3.5 h-3.5 text-[#7C5CBF] cursor-grab active:cursor-grabbing" />
+                            <span>{idx + 1}</span>
+                          </div>
+
+                          {/* Top-Right Top Pick Badge & Pin / Zoom Buttons */}
+                          <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+                            {isPinned && (
+                              <span className="px-2.5 py-1 rounded-full bg-gradient-to-r from-amber-400 to-amber-500 text-stone-950 text-[11px] font-bold shadow-xs">
+                                ★ Top Pick
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => togglePinVisionItem(item)}
+                              title={isPinned ? 'Unpin Top Pick' : 'Pin as Top Pick to front'}
+                              className={`p-1.5 rounded-xl backdrop-blur-xs shadow-xs transition cursor-pointer ${
+                                isPinned
+                                  ? 'bg-amber-400 text-stone-950 hover:bg-amber-300'
+                                  : 'bg-white/85 text-stone-600 hover:bg-white hover:text-[#6B469B]'
+                              }`}
+                            >
+                              <Pin className={`w-3.5 h-3.5 ${isPinned ? 'fill-stone-950' : ''}`} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setLightboxVisionItem(item)}
+                              title="View full screen"
+                              className="p-1.5 rounded-xl bg-white/85 hover:bg-white text-stone-600 hover:text-[#6B469B] backdrop-blur-xs shadow-xs transition cursor-pointer"
+                            >
+                              <Maximize2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Card Body: Click-to-edit Category, Title & Notes */}
+                        <div className="p-4 space-y-2">
+                          {/* Click-to-edit Category Pill */}
+                          <div>
+                            {isEditingCategory ? (
+                              <select
+                                autoFocus
+                                value={visionDraftValue}
+                                onChange={(e) => setVisionDraftValue(e.target.value)}
+                                onBlur={commitVisionField}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') commitVisionField()
+                                  if (e.key === 'Escape') setActiveVisionEdit(null)
+                                }}
+                                className="px-2.5 py-1 rounded-lg border border-[#6B469B] bg-white text-xs font-medium text-[#4A2E6E]"
+                              >
+                                {allVisionCategories.map((c) => (
+                                  <option key={c} value={c}>
+                                    {c}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => openVisionField(item, 'category')}
+                                title="Click to change category label"
+                                className="px-2.5 py-0.5 rounded-full bg-[#F3EEFF] hover:bg-[#E5DAFC] text-[#5B4678] text-[11px] font-semibold transition cursor-pointer"
+                              >
+                                {item.category}
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Click-to-edit Label / Title */}
+                          <div>
+                            {isEditingTitle ? (
+                              <input
+                                type="text"
+                                autoFocus
+                                value={visionDraftValue}
+                                onChange={(e) => setVisionDraftValue(e.target.value)}
+                                onBlur={commitVisionField}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') commitVisionField()
+                                  if (e.key === 'Escape') setActiveVisionEdit(null)
+                                }}
+                                className="w-full px-2 py-1 rounded-lg border border-[#6B469B] bg-white text-sm font-bold text-[#2D223B] focus:outline-none ring-2 ring-[#E6DEFA]"
+                              />
+                            ) : (
+                              <h3
+                                onClick={() => openVisionField(item, 'title')}
+                                title="Click to edit label"
+                                className="font-bold text-sm text-[#2D223B] hover:text-[#6B469B] rounded px-1 -mx-1 hover:bg-[#FAF8FF] transition cursor-text"
+                              >
+                                {item.title}
+                              </h3>
+                            )}
+                          </div>
+
+                          {/* Click-to-edit Notes */}
+                          <div>
+                            {isEditingNotes ? (
+                              <input
+                                type="text"
+                                autoFocus
+                                value={visionDraftValue}
+                                onChange={(e) => setVisionDraftValue(e.target.value)}
+                                onBlur={commitVisionField}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') commitVisionField()
+                                  if (e.key === 'Escape') setActiveVisionEdit(null)
+                                }}
+                                placeholder="Add notes, supplier peg, or color details..."
+                                className="w-full px-2 py-1 rounded-lg border border-[#6B469B] bg-white text-xs text-[#5B4678] focus:outline-none ring-2 ring-[#E6DEFA]"
+                              />
+                            ) : (
+                              <p
+                                onClick={() => openVisionField(item, 'notes')}
+                                title="Click to edit notes"
+                                className="text-xs text-[#6E5D85] hover:text-[#2D223B] rounded px-1 -mx-1 py-0.5 hover:bg-[#FAF8FF] transition cursor-text min-h-[22px]"
+                              >
+                                {item.notes || (
+                                  <span className="text-stone-300 italic">
+                                    + Add notes or supplier peg...
+                                  </span>
+                                )}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card Footer: Delete with Outside-Click Auto-Reset Confirmation */}
+                      <div className="px-4 py-2.5 border-t border-[#F2ECFF] bg-[#FAF8FF]/60 flex items-center justify-between">
+                        <span className="text-[11px] text-[#8E7DA6]">
+                          Drag card to reorder
+                        </span>
+
+                        {isConfirmingDelete ? (
+                          <div
+                            data-delete-confirm="true"
+                            className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-xl"
+                          >
+                            <span className="text-[11px] font-semibold text-rose-700 mr-0.5">
+                              Delete?
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => deleteVisionItem(item.id)}
+                              className="px-2 py-0.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 text-[11px] font-semibold transition cursor-pointer"
+                            >
+                              Yes
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteVisionId(null)}
+                              className="px-2 py-0.5 rounded-lg bg-white text-stone-600 hover:bg-stone-100 border border-stone-200 text-[11px] font-medium transition cursor-pointer"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteVisionId(item.id)}
+                            className="p-1 rounded-lg text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                            title="Delete sample"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Full-Screen Lightbox Modal */}
+            {lightboxVisionItem && (
+              <div
+                onClick={() => setLightboxVisionItem(null)}
+                className="fixed inset-0 z-50 bg-stone-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="bg-white rounded-3xl max-w-4xl w-full overflow-hidden shadow-2xl border border-[#E6DEFA]"
+                >
+                  <div className="relative bg-stone-950 max-h-[75vh] flex items-center justify-center">
+                    <img
+                      src={lightboxVisionItem.image_url}
+                      alt={lightboxVisionItem.title}
+                      className="max-h-[75vh] w-auto object-contain"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setLightboxVisionItem(null)}
+                      className="absolute top-4 right-4 p-2 rounded-full bg-white/90 text-stone-800 hover:bg-white shadow-md cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <div className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-0.5 rounded-full bg-[#F3EEFF] text-[#5B4678] text-xs font-semibold">
+                          {lightboxVisionItem.category}
+                        </span>
+                        {lightboxVisionItem.pinned && (
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
+                            ★ Top Pick
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="font-serif text-xl font-bold text-[#2D223B] mt-1">
+                        {lightboxVisionItem.title}
+                      </h3>
+                      {lightboxVisionItem.notes && (
+                        <p className="text-xs text-[#6E5D85] mt-0.5">{lightboxVisionItem.notes}</p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setLightboxVisionItem(null)}
+                      className="px-4 py-2 rounded-xl bg-[#F3EEFF] hover:bg-[#E6DEFA] text-[#4A2E6E] text-xs font-semibold cursor-pointer self-start sm:self-center"
+                    >
+                      Close Preview
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
       </main>
+
+      {/* Sticky Bottom App Navigation Bar for Android & iOS Phones */}
+      <nav className="fixed bottom-0 inset-x-0 z-40 md:hidden bg-white/95 backdrop-blur-md border-t border-[#E6DEFA] shadow-[0_-4px_20px_rgba(74,46,110,0.08)] pb-[env(safe-area-inset-bottom)]">
+        <div className="grid grid-cols-7 items-center px-1 py-1.5">
+          {(
+            [
+              { id: 'overview', label: 'Home', icon: Sparkles },
+              { id: 'checklist', label: 'Tasks', icon: CheckCircle2 },
+              { id: 'budget', label: 'Budget', icon: Wallet },
+              { id: 'suppliers', label: 'Vendors', icon: Store },
+              { id: 'requirements', label: 'Docs', icon: FileCheck2 },
+              { id: 'guests', label: 'Guests', icon: Users },
+              { id: 'vision', label: 'Vision', icon: ImageIcon },
+            ] as const
+          ).map((item) => {
+            const Icon = item.icon
+            const isActive = activeTab === item.id
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setActiveTab(item.id)
+                  window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}
+                className={`flex flex-col items-center justify-center gap-0.5 py-1 rounded-xl transition cursor-pointer ${
+                  isActive ? 'text-[#6B469B] font-bold' : 'text-[#8E7DA6] hover:text-[#4A2E6E]'
+                }`}
+              >
+                <div
+                  className={`p-1 rounded-lg transition ${
+                    isActive ? 'bg-[#F3EEFF]' : 'bg-transparent'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                </div>
+                <span className="text-[10px] leading-none truncate max-w-full px-0.5">
+                  {item.label}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </nav>
     </div>
   )
 }
