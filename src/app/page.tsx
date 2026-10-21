@@ -24,6 +24,8 @@ import {
   Filter,
   Flame,
   Star,
+  Pin,
+  GripVertical,
 } from 'lucide-react'
 
 type WeddingDetails = {
@@ -53,6 +55,7 @@ type BudgetItem = {
   actual_cost: number
   paid_amount: number
   sort_order: number
+  pinned?: boolean
 }
 
 type Supplier = {
@@ -221,15 +224,16 @@ export default function JomarAndJenilaWeddingPlanner() {
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [newTaskTimeline, setNewTaskTimeline] = useState('12 Months')
 
-  // Budget Filter & Add & Inline Edit
+  // Budget Filter & Add & Click-to-Edit & Pin/Drag
   const [selectedBudgetCategory, setSelectedBudgetCategory] = useState<string>('All')
-  const [editingBudgetId, setEditingBudgetId] = useState<string | null>(null)
-  const [editBudgetRow, setEditBudgetRow] = useState<{
-    supplier: string
-    budget_allocation: string
-    actual_cost: string
-    paid_amount: string
-  }>({ supplier: '', budget_allocation: '0', actual_cost: '0', paid_amount: '0' })
+  const [activeBudgetCell, setActiveBudgetCell] = useState<{
+    id: string
+    field: 'supplier' | 'budget_allocation' | 'actual_cost' | 'paid_amount'
+  } | null>(null)
+  const [cellDraftValue, setCellDraftValue] = useState<string>('')
+  const [confirmDeleteBudgetId, setConfirmDeleteBudgetId] = useState<string | null>(null)
+  const [draggedBudgetId, setDraggedBudgetId] = useState<string | null>(null)
+  const [dragOverBudgetId, setDragOverBudgetId] = useState<string | null>(null)
 
   const [newBudgetCategory, setNewBudgetCategory] = useState('Brides Apparel')
   const [newBudgetItemName, setNewBudgetItemName] = useState('')
@@ -424,45 +428,84 @@ export default function JomarAndJenilaWeddingPlanner() {
     await supabase.from('jj_checklist_tasks').delete().eq('id', id)
   }
 
-  // Budget Handlers
-  function startEditingBudget(item: BudgetItem) {
-    setEditingBudgetId(item.id)
-    setEditBudgetRow({
-      supplier: item.supplier || '',
-      budget_allocation: String(item.budget_allocation || 0),
-      actual_cost: String(item.actual_cost || 0),
-      paid_amount: String(item.paid_amount || 0),
-    })
+  // Budget Handlers: Click-to-Edit Cell, Pin to Top, Drag-and-Drop Reorder, Confirm Delete
+  function openBudgetCell(
+    item: BudgetItem,
+    field: 'supplier' | 'budget_allocation' | 'actual_cost' | 'paid_amount'
+  ) {
+    setActiveBudgetCell({ id: item.id, field })
+    setCellDraftValue(String(item[field] ?? (field === 'supplier' ? '' : 0)))
   }
 
-  async function saveBudgetRow(id: string) {
-    const allocation = Number(editBudgetRow.budget_allocation) || 0
-    const actual = Number(editBudgetRow.actual_cost) || 0
-    const paid = Number(editBudgetRow.paid_amount) || 0
+  async function commitBudgetCell() {
+    if (!activeBudgetCell) return
+    const { id, field } = activeBudgetCell
+    const updatedVal = field === 'supplier' ? cellDraftValue.trim() : Number(cellDraftValue) || 0
+    setActiveBudgetCell(null)
 
     setBudgetItems((prev) =>
-      prev.map((b) =>
-        b.id === id
-          ? {
-              ...b,
-              supplier: editBudgetRow.supplier,
-              budget_allocation: allocation,
-              actual_cost: actual,
-              paid_amount: paid,
-            }
-          : b
-      )
+      prev.map((b) => (b.id === id ? { ...b, [field]: updatedVal } : b))
     )
-    setEditingBudgetId(null)
     await supabase
       .from('jj_budget_items')
-      .update({
-        supplier: editBudgetRow.supplier,
-        budget_allocation: allocation,
-        actual_cost: actual,
-        paid_amount: paid,
-      })
+      .update({ [field]: updatedVal })
       .eq('id', id)
+  }
+
+  async function togglePinBudgetItem(item: BudgetItem) {
+    const nextPinned = !item.pinned
+    setBudgetItems((prev) =>
+      prev.map((b) => (b.id === item.id ? { ...b, pinned: nextPinned } : b))
+    )
+    await supabase
+      .from('jj_budget_items')
+      .update({ pinned: nextPinned })
+      .eq('id', item.id)
+  }
+
+  async function handleBudgetDrop(targetId: string) {
+    setDragOverBudgetId(null)
+    if (!draggedBudgetId || draggedBudgetId === targetId) {
+      setDraggedBudgetId(null)
+      return
+    }
+
+    const sorted = [...budgetItems].sort((a, b) => {
+      if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
+      return (a.sort_order || 0) - (b.sort_order || 0)
+    })
+
+    const fromIdx = sorted.findIndex((i) => i.id === draggedBudgetId)
+    const toIdx = sorted.findIndex((i) => i.id === targetId)
+    if (fromIdx === -1 || toIdx === -1) {
+      setDraggedBudgetId(null)
+      return
+    }
+
+    const [moved] = sorted.splice(fromIdx, 1)
+    // Match target item's pinned state so dragging into/out of the pinned top section feels natural
+    const targetItem = budgetItems.find((i) => i.id === targetId)
+    if (targetItem && Boolean(moved.pinned) !== Boolean(targetItem.pinned)) {
+      moved.pinned = Boolean(targetItem.pinned)
+    }
+    sorted.splice(toIdx, 0, moved)
+
+    const reindexed = sorted.map((item, idx) => ({
+      ...item,
+      sort_order: idx + 1,
+    }))
+
+    setBudgetItems(reindexed)
+    setDraggedBudgetId(null)
+
+    await Promise.all(
+      reindexed.map((item) =>
+        supabase
+          .from('jj_budget_items')
+          .update({ sort_order: item.sort_order, pinned: Boolean(item.pinned) })
+          .eq('id', item.id)
+      )
+    )
   }
 
   async function addBudgetItem(e: React.FormEvent) {
@@ -483,6 +526,7 @@ export default function JomarAndJenilaWeddingPlanner() {
           actual_cost: Number(newBudgetActual) || 0,
           paid_amount: 0,
           sort_order: budgetItems.length + 1,
+          pinned: false,
         },
       ])
       .select()
@@ -497,6 +541,7 @@ export default function JomarAndJenilaWeddingPlanner() {
   }
 
   async function deleteBudgetItem(id: string) {
+    setConfirmDeleteBudgetId(null)
     setBudgetItems((prev) => prev.filter((b) => b.id !== id))
     await supabase.from('jj_budget_items').delete().eq('id', id)
   }
@@ -805,6 +850,25 @@ export default function JomarAndJenilaWeddingPlanner() {
     setDaysUntilWedding(Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24))))
   }, [details?.wedding_date])
 
+  // Automatically dismiss the "Delete? Yes / No" confirmation when clicking anywhere outside it
+  useEffect(() => {
+    if (!confirmDeleteBudgetId) return
+    function handleOutsideClick(e: MouseEvent) {
+      const target = e.target as HTMLElement | null
+      if (target && target.closest('[data-delete-confirm="true"]')) return
+      setConfirmDeleteBudgetId(null)
+    }
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setConfirmDeleteBudgetId(null)
+    }
+    document.addEventListener('mousedown', handleOutsideClick)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [confirmDeleteBudgetId])
+
   const filteredGuests = useMemo(() => {
     return guests.filter((g) => {
       const matchesName = g.full_name.toLowerCase().includes(guestSearch.toLowerCase())
@@ -815,8 +879,14 @@ export default function JomarAndJenilaWeddingPlanner() {
   }, [guests, guestSearch, guestRoleFilter, guestStatusFilter])
 
   const filteredBudgetItems = useMemo(() => {
-    if (selectedBudgetCategory === 'All') return budgetItems
-    return budgetItems.filter((b) => b.category === selectedBudgetCategory)
+    const base =
+      selectedBudgetCategory === 'All'
+        ? budgetItems
+        : budgetItems.filter((b) => b.category === selectedBudgetCategory)
+    return [...base].sort((a, b) => {
+      if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
+      return (a.sort_order || 0) - (b.sort_order || 0)
+    })
   }, [budgetItems, selectedBudgetCategory])
 
   // Dynamic Supplier Categories & Filtered List
@@ -1483,7 +1553,7 @@ export default function JomarAndJenilaWeddingPlanner() {
                   Wedding Budget & Vendor Expenses
                 </h2>
                 <p className="text-xs text-[#6E5D85] mt-0.5">
-                  Click any row&apos;s <strong>Edit</strong> button to allocate budget, assign a supplier, or update actual &amp; paid amounts.
+                  Click any <strong>₱ amount</strong> or <strong>Supplier</strong> cell to edit it immediately. Drag rows by the handle or click the <strong>Pin</strong> icon to keep top priorities at the very top.
                 </p>
               </div>
 
@@ -1608,6 +1678,9 @@ export default function JomarAndJenilaWeddingPlanner() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-[#E6DEFA] text-[11px] uppercase tracking-wider text-[#7C5CBF] bg-[#FAF8FF]">
+                    <th className="py-3 px-2 w-16 text-center" title="Drag or Pin to Top">
+                      Priority
+                    </th>
                     <th className="py-3 px-3">Category</th>
                     <th className="py-3 px-3">Overview / Item</th>
                     <th className="py-3 px-3">Supplier</th>
@@ -1616,72 +1689,189 @@ export default function JomarAndJenilaWeddingPlanner() {
                     <th className="py-3 px-3 text-right">Difference</th>
                     <th className="py-3 px-3 text-right">Paid</th>
                     <th className="py-3 px-3 text-right">Balance</th>
-                    <th className="py-3 px-3 text-right">Actions</th>
+                    <th className="py-3 px-3 text-right">Delete</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#F2ECFF] text-xs sm:text-sm">
                   {filteredBudgetItems.map((item) => {
-                    const isEditing = editingBudgetId === item.id
                     const alloc = Number(item.budget_allocation || 0)
                     const actual = Number(item.actual_cost || 0)
                     const paid = Number(item.paid_amount || 0)
                     const difference = alloc - actual
                     const balance = (actual > 0 ? actual : alloc) - paid
+                    const isPinned = Boolean(item.pinned)
+                    const isDragOver = dragOverBudgetId === item.id
+                    const isConfirmingDelete = confirmDeleteBudgetId === item.id
+
+                    const isEditingSupplier =
+                      activeBudgetCell?.id === item.id && activeBudgetCell.field === 'supplier'
+                    const isEditingAlloc =
+                      activeBudgetCell?.id === item.id &&
+                      activeBudgetCell.field === 'budget_allocation'
+                    const isEditingActual =
+                      activeBudgetCell?.id === item.id && activeBudgetCell.field === 'actual_cost'
+                    const isEditingPaid =
+                      activeBudgetCell?.id === item.id && activeBudgetCell.field === 'paid_amount'
 
                     return (
-                      <tr key={item.id} className="hover:bg-[#FAF8FF] transition">
+                      <tr
+                        key={item.id}
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggedBudgetId(item.id)
+                          e.dataTransfer.effectAllowed = 'move'
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault()
+                          e.dataTransfer.dropEffect = 'move'
+                          if (dragOverBudgetId !== item.id) {
+                            setDragOverBudgetId(item.id)
+                          }
+                        }}
+                        onDragLeave={() => {
+                          if (dragOverBudgetId === item.id) {
+                            setDragOverBudgetId(null)
+                          }
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          handleBudgetDrop(item.id)
+                        }}
+                        onDragEnd={() => {
+                          setDraggedBudgetId(null)
+                          setDragOverBudgetId(null)
+                        }}
+                        className={`transition ${
+                          isDragOver
+                            ? 'border-t-2 border-t-[#6B469B] bg-[#F3EEFF]/70'
+                            : isPinned
+                            ? 'bg-amber-50/35 hover:bg-amber-50/60'
+                            : 'hover:bg-[#FAF8FF]'
+                        } ${draggedBudgetId === item.id ? 'opacity-40' : ''}`}
+                      >
+                        {/* Drag Handle & Pin to Top */}
+                        <td className="py-3 px-2">
+                          <div className="flex items-center justify-center gap-1">
+                            <span
+                              className="cursor-grab active:cursor-grabbing text-stone-300 hover:text-[#6B469B] p-0.5"
+                              title="Drag row to reorder"
+                            >
+                              <GripVertical className="w-3.5 h-3.5" />
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => togglePinBudgetItem(item)}
+                              title={isPinned ? 'Unpin from top' : 'Pin to top as priority'}
+                              className={`p-1 rounded-lg transition cursor-pointer ${
+                                isPinned
+                                  ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                                  : 'text-stone-300 hover:text-[#6B469B] hover:bg-[#F3EEFF]'
+                              }`}
+                            >
+                              <Pin className={`w-3.5 h-3.5 ${isPinned ? 'fill-amber-500' : ''}`} />
+                            </button>
+                          </div>
+                        </td>
+
                         <td className="py-3 px-3">
                           <span className="px-2.5 py-1 rounded-lg bg-[#F3EEFF] text-[#5B4678] text-xs font-medium">
                             {item.category}
                           </span>
                         </td>
-                        <td className="py-3 px-3 font-semibold text-[#2D223B]">{item.item_name}</td>
+
+                        <td className="py-3 px-3 font-semibold text-[#2D223B]">
+                          <div className="flex items-center gap-1.5">
+                            <span>{item.item_name}</span>
+                            {isPinned && (
+                              <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                                Top Priority
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Click-to-edit Supplier */}
                         <td className="py-3 px-3 text-[#5B4678]">
-                          {isEditing ? (
+                          {isEditingSupplier ? (
                             <input
                               type="text"
-                              value={editBudgetRow.supplier}
-                              onChange={(e) =>
-                                setEditBudgetRow({ ...editBudgetRow, supplier: e.target.value })
-                              }
+                              autoFocus
+                              value={cellDraftValue}
+                              onChange={(e) => setCellDraftValue(e.target.value)}
+                              onBlur={commitBudgetCell}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitBudgetCell()
+                                if (e.key === 'Escape') setActiveBudgetCell(null)
+                              }}
                               placeholder="Supplier name"
-                              className="px-2 py-1 rounded-lg border border-[#7C5CBF] bg-white w-36 text-xs"
+                              className="px-2 py-1 rounded-lg border border-[#6B469B] bg-white w-36 text-xs focus:outline-none ring-2 ring-[#E6DEFA]"
                             />
                           ) : (
-                            item.supplier || <span className="text-stone-300">—</span>
+                            <button
+                              type="button"
+                              onClick={() => openBudgetCell(item, 'supplier')}
+                              title="Click to edit supplier"
+                              className="text-left w-full px-1.5 py-1 -mx-1.5 rounded-lg hover:bg-[#F3EEFF] hover:text-[#2D223B] transition cursor-text"
+                            >
+                              {item.supplier || <span className="text-stone-300 italic">Add supplier...</span>}
+                            </button>
                           )}
                         </td>
+
+                        {/* Click-to-edit Budget Allocation */}
                         <td className="py-3 px-3 text-right font-medium text-[#2D223B]">
-                          {isEditing ? (
+                          {isEditingAlloc ? (
                             <input
                               type="number"
-                              value={editBudgetRow.budget_allocation}
-                              onChange={(e) =>
-                                setEditBudgetRow({
-                                  ...editBudgetRow,
-                                  budget_allocation: e.target.value,
-                                })
-                              }
-                              className="px-2 py-1 rounded-lg border border-[#7C5CBF] bg-white w-28 text-right text-xs"
+                              autoFocus
+                              value={cellDraftValue}
+                              onChange={(e) => setCellDraftValue(e.target.value)}
+                              onBlur={commitBudgetCell}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitBudgetCell()
+                                if (e.key === 'Escape') setActiveBudgetCell(null)
+                              }}
+                              className="px-2 py-1 rounded-lg border border-[#6B469B] bg-white w-28 text-right text-xs focus:outline-none ring-2 ring-[#E6DEFA]"
                             />
                           ) : (
-                            formatPHP(alloc)
+                            <button
+                              type="button"
+                              onClick={() => openBudgetCell(item, 'budget_allocation')}
+                              title="Click to edit Budget Allocation"
+                              className="px-2 py-1 -mr-2 rounded-lg hover:bg-[#F3EEFF] hover:text-[#6B469B] transition cursor-text font-medium"
+                            >
+                              {formatPHP(alloc)}
+                            </button>
                           )}
                         </td>
+
+                        {/* Click-to-edit Actual Cost */}
                         <td className="py-3 px-3 text-right font-medium text-[#2D223B]">
-                          {isEditing ? (
+                          {isEditingActual ? (
                             <input
                               type="number"
-                              value={editBudgetRow.actual_cost}
-                              onChange={(e) =>
-                                setEditBudgetRow({ ...editBudgetRow, actual_cost: e.target.value })
-                              }
-                              className="px-2 py-1 rounded-lg border border-[#7C5CBF] bg-white w-28 text-right text-xs"
+                              autoFocus
+                              value={cellDraftValue}
+                              onChange={(e) => setCellDraftValue(e.target.value)}
+                              onBlur={commitBudgetCell}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitBudgetCell()
+                                if (e.key === 'Escape') setActiveBudgetCell(null)
+                              }}
+                              className="px-2 py-1 rounded-lg border border-[#6B469B] bg-white w-28 text-right text-xs focus:outline-none ring-2 ring-[#E6DEFA]"
                             />
                           ) : (
-                            formatPHP(actual)
+                            <button
+                              type="button"
+                              onClick={() => openBudgetCell(item, 'actual_cost')}
+                              title="Click to edit Actual Cost"
+                              className="px-2 py-1 -mr-2 rounded-lg hover:bg-[#F3EEFF] hover:text-[#6B469B] transition cursor-text font-medium"
+                            >
+                              {formatPHP(actual)}
+                            </button>
                           )}
                         </td>
+
                         <td
                           className={`py-3 px-3 text-right font-semibold ${
                             difference < 0 ? 'text-rose-600' : 'text-emerald-700'
@@ -1689,57 +1879,72 @@ export default function JomarAndJenilaWeddingPlanner() {
                         >
                           {formatPHP(difference)}
                         </td>
+
+                        {/* Click-to-edit Paid Amount */}
                         <td className="py-3 px-3 text-right text-[#5B4678]">
-                          {isEditing ? (
+                          {isEditingPaid ? (
                             <input
                               type="number"
-                              value={editBudgetRow.paid_amount}
-                              onChange={(e) =>
-                                setEditBudgetRow({ ...editBudgetRow, paid_amount: e.target.value })
-                              }
-                              className="px-2 py-1 rounded-lg border border-[#7C5CBF] bg-white w-24 text-right text-xs"
+                              autoFocus
+                              value={cellDraftValue}
+                              onChange={(e) => setCellDraftValue(e.target.value)}
+                              onBlur={commitBudgetCell}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') commitBudgetCell()
+                                if (e.key === 'Escape') setActiveBudgetCell(null)
+                              }}
+                              className="px-2 py-1 rounded-lg border border-[#6B469B] bg-white w-24 text-right text-xs focus:outline-none ring-2 ring-[#E6DEFA]"
                             />
                           ) : (
-                            formatPHP(paid)
+                            <button
+                              type="button"
+                              onClick={() => openBudgetCell(item, 'paid_amount')}
+                              title="Click to edit Paid Amount"
+                              className="px-2 py-1 -mr-2 rounded-lg hover:bg-[#F3EEFF] hover:text-[#6B469B] transition cursor-text"
+                            >
+                              {formatPHP(paid)}
+                            </button>
                           )}
                         </td>
+
                         <td className="py-3 px-3 text-right font-semibold text-amber-800">
                           {formatPHP(balance)}
                         </td>
+
+                        {/* Delete with Confirmation */}
                         <td className="py-3 px-3 text-right">
-                          {isEditing ? (
-                            <div className="inline-flex items-center gap-1">
+                          {isConfirmingDelete ? (
+                            <div
+                              data-delete-confirm="true"
+                              className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 px-2 py-1 rounded-xl"
+                            >
+                              <span className="text-[11px] font-semibold text-rose-700 mr-0.5">
+                                Delete?
+                              </span>
                               <button
-                                onClick={() => saveBudgetRow(item.id)}
-                                className="p-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
-                                title="Save"
+                                type="button"
+                                onClick={() => deleteBudgetItem(item.id)}
+                                className="px-2 py-0.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 text-[11px] font-semibold transition cursor-pointer"
                               >
-                                <Check className="w-3.5 h-3.5" />
+                                Yes
                               </button>
                               <button
-                                onClick={() => setEditingBudgetId(null)}
-                                className="p-1.5 rounded-lg bg-stone-200 text-stone-700 hover:bg-stone-300 cursor-pointer"
-                                title="Cancel"
+                                type="button"
+                                onClick={() => setConfirmDeleteBudgetId(null)}
+                                className="px-2 py-0.5 rounded-lg bg-white text-stone-600 hover:bg-stone-100 border border-stone-200 text-[11px] font-medium transition cursor-pointer"
                               >
-                                <X className="w-3.5 h-3.5" />
+                                No
                               </button>
                             </div>
                           ) : (
-                            <div className="inline-flex items-center gap-1">
-                              <button
-                                onClick={() => startEditingBudget(item)}
-                                className="px-2.5 py-1 rounded-lg bg-[#F3EEFF] hover:bg-[#E5DAFC] text-[#6B469B] text-xs font-medium transition cursor-pointer"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => deleteBudgetItem(item.id)}
-                                className="p-1 text-stone-400 hover:text-rose-600 transition cursor-pointer"
-                                title="Delete row"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteBudgetId(item.id)}
+                              className="p-1.5 rounded-lg text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                              title="Delete row"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           )}
                         </td>
                       </tr>
